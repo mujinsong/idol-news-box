@@ -1,0 +1,19 @@
+{
+    "server": {
+        "port": 8080,
+        "mode": "debug"
+    },
+    "database": {
+        "host": "localhost",
+        "port": 5432,
+        "user": "postgres",
+        "password": "your_password",
+        "dbname": "weibo_spider",
+        "sslmode": "disable"
+    },
+    "random_wait_pages": [1, 5],
+    "random_wait_seconds": [6, 10],
+    "write_mode": ["csv", "json"],
+    "cookie": "your_cookie_here",
+    "output_dir": "./output"
+}
