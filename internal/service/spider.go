@@ -8,61 +8,53 @@ import (
 
 	"github.com/yuanhuaxi/weibo-spider/internal/config"
 	"github.com/yuanhuaxi/weibo-spider/internal/dto"
+	"github.com/yuanhuaxi/weibo-spider/internal/mq"
 	"github.com/yuanhuaxi/weibo-spider/internal/spider"
 	"github.com/yuanhuaxi/weibo-spider/pkg/logger"
 )
 
 // SpiderService 爬虫服务
 type SpiderService struct {
-	cfg       *config.Config
-	running   bool
-	mu        sync.Mutex
-	taskChan  chan *dto.CrawlTask       // 任务通道
-	tasks     map[string]*dto.CrawlTask // 任务存储
-	taskMu    sync.RWMutex              // 任务存储锁
+	cfg      *config.Config
+	spider   *spider.Spider   // 复用的爬虫实例
+	producer *mq.TaskProducer // MQ生产者
+	running  bool
+	mu       sync.Mutex
+	tasks    map[string]*dto.CrawlTask // 任务存储
+	taskMu   sync.RWMutex              // 任务存储锁
 }
 
 // NewSpiderService 创建爬虫服务
 func NewSpiderService(cfg *config.Config) *SpiderService {
-	s := &SpiderService{
-		cfg:      cfg,
-		taskChan: make(chan *dto.CrawlTask, 100), // 缓冲100个任务
-		tasks:    make(map[string]*dto.CrawlTask),
-	}
-	return s
-}
-
-// Start 启动任务监听
-func (s *SpiderService) Start() {
-	go s.taskWorker()
-	logger.Info.Println("任务监听器已启动")
-}
-
-// taskWorker 任务处理协程
-func (s *SpiderService) taskWorker() {
-	for task := range s.taskChan {
-		s.processTask(task)
+	return &SpiderService{
+		cfg:    cfg,
+		spider: spider.New(cfg),
+		tasks:  make(map[string]*dto.CrawlTask),
 	}
 }
 
-// processTask 处理单个任务
-func (s *SpiderService) processTask(task *dto.CrawlTask) {
+// SetProducer 设置MQ生产者
+func (s *SpiderService) SetProducer(producer *mq.TaskProducer) {
+	s.producer = producer
+}
+
+// ProcessTask 处理单个任务（供MQ消费者调用）
+func (s *SpiderService) ProcessTask(task *dto.CrawlTask) error {
+	// 存储任务用于状态查询
+	s.taskMu.Lock()
+	s.tasks[task.TaskID] = task
+	s.taskMu.Unlock()
+
 	// 更新任务状态为运行中
 	s.updateTaskStatus(task.TaskID, dto.TaskStatusRunning, "")
-
-	sp, err := spider.New(s.cfg)
-	if err != nil {
-		s.updateTaskStatus(task.TaskID, dto.TaskStatusFailed, err.Error())
-		return
-	}
 
 	logger.Info.Printf("开始处理任务: %s, 用户: %s", task.TaskID, task.UserID)
 
 	// 爬取微博
-	weibos, err := sp.FetchWeibos(task)
+	weibos, err := s.spider.FetchWeibos(task)
 	if err != nil {
 		s.updateTaskStatus(task.TaskID, dto.TaskStatusFailed, err.Error())
-		return
+		return err
 	}
 
 	// 更新进度
@@ -72,7 +64,6 @@ func (s *SpiderService) processTask(task *dto.CrawlTask) {
 			TotalWeibos:   len(weibos),
 			CrawledWeibos: len(weibos),
 		}
-		// 统计图片和视频数量
 		for _, w := range weibos {
 			t.Progress.TotalImages += len(w.OriginalPictures)
 			if w.VideoURL != "" {
@@ -85,15 +76,16 @@ func (s *SpiderService) processTask(task *dto.CrawlTask) {
 	// 如果需要下载媒体文件
 	if task.DownloadMedia {
 		s.updateTaskStatus(task.TaskID, dto.TaskStatusDownloading, "")
-		s.downloadMedia(task, weibos, sp)
+		s.downloadMedia(task, weibos)
 	}
 
 	s.updateTaskStatus(task.TaskID, dto.TaskStatusCompleted, "")
 	logger.Info.Printf("任务完成: %s, 共爬取 %d 条微博", task.TaskID, len(weibos))
+	return nil
 }
 
 // downloadMedia 下载图片和视频
-func (s *SpiderService) downloadMedia(task *dto.CrawlTask, weibos []*dto.Weibo, sp *spider.Spider) {
+func (s *SpiderService) downloadMedia(task *dto.CrawlTask, weibos []*dto.Weibo) {
 	downloader := NewMediaDownloader(s.cfg)
 
 	for _, weibo := range weibos {
@@ -148,7 +140,7 @@ func generateTaskID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// SubmitTask 提交异步任务
+// SubmitTask 提交异步任务到MQ
 func (s *SpiderService) SubmitTask(task *dto.CrawlTask) (*dto.TaskResponse, error) {
 	// 生成任务ID
 	task.TaskID = generateTaskID()
@@ -157,25 +149,29 @@ func (s *SpiderService) SubmitTask(task *dto.CrawlTask) (*dto.TaskResponse, erro
 	task.UpdatedAt = time.Now()
 	task.Progress = &dto.TaskProgress{}
 
-	// 存储任务
+	// 存储任务用于状态查询
 	s.taskMu.Lock()
 	s.tasks[task.TaskID] = task
 	s.taskMu.Unlock()
 
-	// 发送到任务通道
-	select {
-	case s.taskChan <- task:
-		return &dto.TaskResponse{
-			TaskID:  task.TaskID,
-			Status:  task.Status,
-			Message: "任务提交成功",
-		}, nil
-	default:
-		s.taskMu.Lock()
-		delete(s.tasks, task.TaskID)
-		s.taskMu.Unlock()
-		return nil, fmt.Errorf("任务队列已满，请稍后重试")
+	// 发布到MQ
+	if s.producer != nil {
+		if err := s.producer.Publish(task); err != nil {
+			s.taskMu.Lock()
+			delete(s.tasks, task.TaskID)
+			s.taskMu.Unlock()
+			return nil, fmt.Errorf("发布任务到队列失败: %w", err)
+		}
+	} else {
+		// 如果没有配置MQ，直接在协程中处理
+		go s.ProcessTask(task)
 	}
+
+	return &dto.TaskResponse{
+		TaskID:  task.TaskID,
+		Status:  task.Status,
+		Message: "任务提交成功",
+	}, nil
 }
 
 // GetTaskStatus 获取任务状态
@@ -222,13 +218,8 @@ func (s *SpiderService) Run(task *dto.CrawlTask) (*dto.CrawlResult, error) {
 		s.mu.Unlock()
 	}()
 
-	sp, err := spider.New(s.cfg)
-	if err != nil {
-		return nil, err
-	}
-
 	logger.Info.Printf("开始爬取任务: 用户 %s", task.UserID)
-	result, err := sp.Run(task)
+	result, err := s.spider.Run(task)
 	if err != nil {
 		return nil, err
 	}
@@ -243,12 +234,7 @@ func (s *SpiderService) Run(task *dto.CrawlTask) (*dto.CrawlResult, error) {
 
 // GetUserInfo 获取用户信息
 func (s *SpiderService) GetUserInfo(userID string) (*dto.User, error) {
-	sp, err := spider.New(s.cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return sp.FetchUserInfo(userID)
+	return s.spider.FetchUserInfo(userID)
 }
 
 // GetWeibos 获取用户微博（同步方式，保留兼容）
@@ -267,12 +253,7 @@ func (s *SpiderService) GetWeibos(task *dto.CrawlTask) (*dto.WeiboList, error) {
 		s.mu.Unlock()
 	}()
 
-	sp, err := spider.New(s.cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	weibos, err := sp.FetchWeibos(task)
+	weibos, err := s.spider.FetchWeibos(task)
 	if err != nil {
 		return nil, err
 	}

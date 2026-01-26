@@ -22,10 +22,17 @@ type DatabaseConfig struct {
 	SSLMode  string `json:"sslmode"`
 }
 
+// RabbitMQConfig RabbitMQ配置
+type RabbitMQConfig struct {
+	URL       string `json:"url"`        // amqp://user:pass@host:port/vhost
+	TaskQueue string `json:"task_queue"` // 任务队列名称
+}
+
 // Config 爬虫配置
 type Config struct {
 	Server            ServerConfig   `json:"server"`
 	Database          DatabaseConfig `json:"database"`
+	RabbitMQ          RabbitMQConfig `json:"rabbitmq"`
 	RandomWaitPages   [2]int         `json:"random_wait_pages"`
 	RandomWaitSeconds [2]int         `json:"random_wait_seconds"`
 	WriteMode         []string       `json:"write_mode"`
@@ -46,6 +53,10 @@ func Default() *Config {
 			User:    "postgres",
 			DBName:  "weibo_spider",
 			SSLMode: "disable",
+		},
+		RabbitMQ: RabbitMQConfig{
+			URL:       "amqp://guest:guest@localhost:5672/",
+			TaskQueue: "weibo_spider_tasks",
 		},
 		RandomWaitPages:   [2]int{1, 5},
 		RandomWaitSeconds: [2]int{6, 10},

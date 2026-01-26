@@ -3,7 +3,7 @@ package webserver
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/yuanhuaxi/weibo-spider/internal/controller"
-	
+	"github.com/yuanhuaxi/weibo-spider/internal/service"
 )
 
 // Server Web服务器

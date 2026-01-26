@@ -23,7 +23,6 @@ type CrawlResult struct {
 // Spider 微博爬虫
 type Spider struct {
 	cfg        *config.Config
-	collector  *colly.Collector
 	limiter    *Limiter
 	writers    []writer.Writer
 	infoParser *parser.InfoParser
@@ -31,23 +30,24 @@ type Spider struct {
 }
 
 // New 创建爬虫实例
-func New(cfg *config.Config) (*Spider, error) {
-	s := &Spider{
+func New(cfg *config.Config) *Spider {
+	return &Spider{
 		cfg:        cfg,
 		infoParser: parser.NewInfoParser(),
 		pageParser: parser.NewPageParser(),
 		limiter:    NewLimiter(cfg.RandomWaitPages, cfg.RandomWaitSeconds),
 	}
+}
 
-	s.collector = colly.NewCollector()
-	s.collector.OnRequest(func(r *colly.Request) {
+// newCollector 创建新的 Collector（每次请求都需要新建，避免回调累积）
+func (s *Spider) newCollector() *colly.Collector {
+	c := colly.NewCollector()
+	c.OnRequest(func(r *colly.Request) {
 		logger.Info.Printf("请求URL: %s", r.URL.String())
-		logger.Info.Printf("Cookie长度: %d", len(cfg.Cookie))
-		r.Headers.Set("Cookie", cfg.Cookie)
+		r.Headers.Set("Cookie", s.cfg.Cookie)
 		r.Headers.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 	})
-
-	return s, nil
+	return c
 }
 
 // initWriters 初始化写入器
@@ -105,13 +105,14 @@ func (s *Spider) FetchUserInfo(userID string) (*dto.User, error) {
 	var user *dto.User
 	url := fmt.Sprintf("%s/%s/info", baseURL, userID)
 
-	s.collector.OnHTML("body", func(e *colly.HTMLElement) {
+	c := s.newCollector()
+	c.OnHTML("body", func(e *colly.HTMLElement) {
 		html, _ := e.DOM.Html()
 		logger.Info.Printf("爬取到的HTML内容: %s", html)
 		user = s.infoParser.Parse(e.DOM, userID)
 	})
 
-	if err := s.collector.Visit(url); err != nil {
+	if err := c.Visit(url); err != nil {
 		return nil, err
 	}
 	s.limiter.Wait()
@@ -136,7 +137,8 @@ func (s *Spider) FetchWeibos(task *dto.CrawlTask) ([]*dto.Weibo, error) {
 		url := fmt.Sprintf("%s/%s?page=%d", baseURL, task.UserID, page)
 		hasMore := false
 
-		s.collector.OnHTML("body", func(e *colly.HTMLElement) {
+		c := s.newCollector()
+		c.OnHTML("body", func(e *colly.HTMLElement) {
 			weibos := s.pageParser.Parse(e.DOM, task.UserID)
 			for _, w := range weibos {
 				// 时间过滤
@@ -156,7 +158,7 @@ func (s *Spider) FetchWeibos(task *dto.CrawlTask) ([]*dto.Weibo, error) {
 			}
 		})
 
-		if err := s.collector.Visit(url); err != nil {
+		if err := c.Visit(url); err != nil {
 			return result, err
 		}
 		s.limiter.Wait()
