@@ -1,30 +1,33 @@
 package dto
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // TaskStatus 任务状态
 type TaskStatus string
 
 const (
-	TaskStatusPending    TaskStatus = "pending"    // 等待中
-	TaskStatusRunning    TaskStatus = "running"    // 运行中
-	TaskStatusCompleted  TaskStatus = "completed"  // 已完成
-	TaskStatusFailed     TaskStatus = "failed"     // 失败
+	TaskStatusPending     TaskStatus = "pending"     // 等待中
+	TaskStatusRunning     TaskStatus = "running"     // 运行中
+	TaskStatusCompleted   TaskStatus = "completed"   // 已完成
+	TaskStatusFailed      TaskStatus = "failed"      // 失败
 	TaskStatusDownloading TaskStatus = "downloading" // 下载媒体中
 )
 
 // CrawlTask 爬取任务参数
 type CrawlTask struct {
-	TaskID        string     `json:"task_id"`
-	UserID        string     `json:"user_id"`
-	SinceDate     time.Time  `json:"since_date"`
-	EndDate       time.Time  `json:"end_date"`
-	Filter        int        `json:"filter"`
-	DownloadMedia bool       `json:"download_media"` // 是否下载图片和视频
-	Status        TaskStatus `json:"status"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	Error         string     `json:"error,omitempty"`
+	TaskID        string        `json:"task_id"`
+	UserID        string        `json:"user_id"`
+	SinceDate     time.Time     `json:"since_date"`
+	EndDate       time.Time     `json:"end_date"`
+	Filter        int           `json:"filter"`
+	DownloadMedia bool          `json:"download_media"` // 是否下载图片和视频
+	Status        TaskStatus    `json:"status"`
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
+	Error         string        `json:"error,omitempty"`
 	Progress      *TaskProgress `json:"progress,omitempty"`
 }
 
@@ -45,6 +48,37 @@ type CrawlRequest struct {
 	EndDate       string `json:"end_date"`
 	Filter        int    `json:"filter"`
 	DownloadMedia bool   `json:"download_media"` // 是否下载图片和视频
+}
+
+// ToTask 将请求转换为 CrawlTask，返回错误信息（如果有）
+func (r *CrawlRequest) ToTask() (*CrawlTask, error) {
+	task := &CrawlTask{
+		UserID:        r.UserID,
+		Filter:        r.Filter,
+		DownloadMedia: r.DownloadMedia,
+	}
+
+	if r.SinceDate != "" {
+		t, err := time.Parse("2006-01-02", r.SinceDate)
+		if err != nil {
+			return nil, fmt.Errorf("since_date 格式错误")
+		}
+		task.SinceDate = t
+	} else {
+		task.SinceDate = time.Now().AddDate(0, 0, -7)
+	}
+
+	if r.EndDate == "" || r.EndDate == "now" {
+		task.EndDate = time.Now()
+	} else {
+		t, err := time.Parse("2006-01-02", r.EndDate)
+		if err != nil {
+			return nil, fmt.Errorf("end_date 格式错误")
+		}
+		task.EndDate = t
+	}
+
+	return task, nil
 }
 
 // CrawlResult 爬取结果
