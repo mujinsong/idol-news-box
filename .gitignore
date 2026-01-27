@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-weibo-spider
+/weibo-spider
 
 # Test binary
 *.test
