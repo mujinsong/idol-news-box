@@ -15,27 +15,35 @@ import (
 
 // SpiderService 爬虫服务
 type SpiderService struct {
-	cfg      *config.Config
-	spider   *spider.Spider   // 复用的爬虫实例
-	producer *mq.TaskProducer // MQ生产者
-	running  bool
-	mu       sync.Mutex
-	tasks    map[string]*dto.CrawlTask // 任务存储
-	taskMu   sync.RWMutex              // 任务存储锁
+	cfg           *config.Config
+	spider        *spider.Spider    // 复用的爬虫实例
+	downloader    *MediaDownloader  // 复用的下载器
+	producer      *mq.TaskProducer  // MQ生产者
+	mediaProducer *mq.MediaProducer // 媒体下载MQ生产者
+	running       bool
+	mu            sync.Mutex
+	tasks         map[string]*dto.CrawlTask // 任务存储
+	taskMu        sync.RWMutex              // 任务存储锁
 }
 
 // NewSpiderService 创建爬虫服务
 func NewSpiderService(cfg *config.Config) *SpiderService {
 	return &SpiderService{
-		cfg:    cfg,
-		spider: spider.New(cfg),
-		tasks:  make(map[string]*dto.CrawlTask),
+		cfg:        cfg,
+		spider:     spider.New(cfg),
+		downloader: NewMediaDownloader(cfg),
+		tasks:      make(map[string]*dto.CrawlTask),
 	}
 }
 
 // SetProducer 设置MQ生产者
 func (s *SpiderService) SetProducer(producer *mq.TaskProducer) {
 	s.producer = producer
+}
+
+// SetMediaProducer 设置媒体下载MQ生产者
+func (s *SpiderService) SetMediaProducer(producer *mq.MediaProducer) {
+	s.mediaProducer = producer
 }
 
 // ProcessTask 处理单个任务（供MQ消费者调用）
@@ -84,29 +92,128 @@ func (s *SpiderService) ProcessTask(task *dto.CrawlTask) error {
 	return nil
 }
 
-// downloadMedia 下载图片和视频
-func (s *SpiderService) downloadMedia(task *dto.CrawlTask, weibos []*dto.Weibo) {
-	downloader := NewMediaDownloader(s.cfg)
+// downloadTask 下载任务
+type downloadTask struct {
+	userID  string
+	weiboID string
+	url     string
+	taskID  string
+	isVideo bool
+}
 
+// downloadMedia 下载图片和视频（发送到MQ队列）
+func (s *SpiderService) downloadMedia(task *dto.CrawlTask, weibos []*dto.Weibo) {
+	// 如果有媒体生产者，发送到队列异步处理
+	if s.mediaProducer != nil {
+		s.sendMediaToQueue(task, weibos)
+		return
+	}
+
+	// 否则直接下载（兼容旧逻辑）
+	s.downloadMediaDirect(task, weibos)
+}
+
+// sendMediaToQueue 发送媒体下载任务到队列
+func (s *SpiderService) sendMediaToQueue(task *dto.CrawlTask, weibos []*dto.Weibo) {
 	for _, weibo := range weibos {
-		// 下载图片
 		for _, imgURL := range weibo.OriginalPictures {
-			if err := downloader.DownloadImage(task.UserID, weibo.ID, imgURL); err != nil {
-				logger.Error.Printf("下载图片失败: %s, %v", imgURL, err)
-			} else {
-				s.incrementProgress(task.TaskID, "image")
+			mediaTask := &dto.MediaDownloadTask{
+				TaskID:    task.TaskID,
+				UserID:    task.UserID,
+				WeiboID:   weibo.ID,
+				MediaType: dto.MediaTypeImage,
+				URL:       imgURL,
+				CreatedAt: time.Now(),
+			}
+			if err := s.mediaProducer.Publish(mediaTask); err != nil {
+				logger.Error.Printf("发送图片下载任务失败: %v", err)
 			}
 		}
-
-		// 下载视频
 		if weibo.VideoURL != "" {
-			if err := downloader.DownloadVideo(task.UserID, weibo.ID, weibo.VideoURL); err != nil {
-				logger.Error.Printf("下载视频失败: %s, %v", weibo.VideoURL, err)
-			} else {
-				s.incrementProgress(task.TaskID, "video")
+			mediaTask := &dto.MediaDownloadTask{
+				TaskID:    task.TaskID,
+				UserID:    task.UserID,
+				WeiboID:   weibo.ID,
+				MediaType: dto.MediaTypeVideo,
+				URL:       weibo.VideoURL,
+				CreatedAt: time.Now(),
+			}
+			if err := s.mediaProducer.Publish(mediaTask); err != nil {
+				logger.Error.Printf("发送视频下载任务失败: %v", err)
 			}
 		}
 	}
+	logger.Info.Printf("已发送媒体下载任务到队列")
+}
+
+// downloadMediaDirect 直接下载媒体（并发下载）
+func (s *SpiderService) downloadMediaDirect(task *dto.CrawlTask, weibos []*dto.Weibo) {
+	// 收集所有下载任务
+	var tasks []downloadTask
+	for _, weibo := range weibos {
+		for _, imgURL := range weibo.OriginalPictures {
+			tasks = append(tasks, downloadTask{
+				userID:  task.UserID,
+				weiboID: weibo.ID,
+				url:     imgURL,
+				taskID:  task.TaskID,
+				isVideo: false,
+			})
+		}
+		if weibo.VideoURL != "" {
+			tasks = append(tasks, downloadTask{
+				userID:  task.UserID,
+				weiboID: weibo.ID,
+				url:     weibo.VideoURL,
+				taskID:  task.TaskID,
+				isVideo: true,
+			})
+		}
+	}
+
+	if len(tasks) == 0 {
+		return
+	}
+
+	// 并发下载，限制并发数为5
+	const maxWorkers = 10
+	taskChan := make(chan downloadTask, len(tasks))
+	var wg sync.WaitGroup
+
+	// 启动 worker
+	for i := 0; i < maxWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for dt := range taskChan {
+				var err error
+				if dt.isVideo {
+					err = s.downloader.DownloadVideo(dt.userID, dt.weiboID, dt.url)
+				} else {
+					err = s.downloader.DownloadImage(dt.userID, dt.weiboID, dt.url)
+				}
+
+				if err != nil {
+					logger.Error.Printf("下载失败: %s, %v", dt.url, err)
+				} else {
+					if dt.isVideo {
+						s.incrementProgress(dt.taskID, "video")
+					} else {
+						s.incrementProgress(dt.taskID, "image")
+					}
+				}
+			}
+		}()
+	}
+
+	// 发送任务
+	for _, t := range tasks {
+		taskChan <- t
+	}
+	close(taskChan)
+
+	// 等待完成
+	wg.Wait()
 }
 
 // incrementProgress 增加进度
@@ -262,4 +369,33 @@ func (s *SpiderService) GetWeibos(task *dto.CrawlTask) (*dto.WeiboList, error) {
 		Weibos: weibos,
 		Total:  len(weibos),
 	}, nil
+}
+
+// HandleMediaDownload 处理媒体下载任务（供MQ消费者调用）
+func (s *SpiderService) HandleMediaDownload(task *dto.MediaDownloadTask) error {
+	var err error
+	if task.MediaType == dto.MediaTypeVideo {
+		err = s.downloader.DownloadVideo(task.UserID, task.WeiboID, task.URL)
+	} else {
+		err = s.downloader.DownloadImage(task.UserID, task.WeiboID, task.URL)
+	}
+
+	if err != nil {
+		logger.Error.Printf("媒体下载失败: %s, %v", task.URL, err)
+		return err
+	}
+
+	// 更新进度
+	if task.MediaType == dto.MediaTypeVideo {
+		s.incrementProgress(task.TaskID, "video")
+	} else {
+		s.incrementProgress(task.TaskID, "image")
+	}
+
+	return nil
+}
+
+// GetSpecialFollows 获取特别关注列表
+func (s *SpiderService) GetSpecialFollows() (*dto.SpecialFollowList, error) {
+	return s.spider.FetchSpecialFollows()
 }

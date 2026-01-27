@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"github.com/yuanhuaxi/weibo-spider/internal/database"
 	"github.com/yuanhuaxi/weibo-spider/internal/model"
+	"github.com/yu
 	"gorm.io/gorm"
 )
 
@@ -15,7 +15,7 @@ type TaskRepository struct {
 func NewTaskRepository() *TaskRepository {
 	return &TaskRepository{
 		getDB: func() *gorm.DB {
-			return database.GetFactory().GetDB()
+			return store.GetFactory().GetDB()
 		},
 	}
 }

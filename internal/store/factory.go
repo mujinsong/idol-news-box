@@ -1,4 +1,4 @@
-package database
+package store
 
 import (
 	"fmt"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/yuanhuaxi/weibo-spider/internal/config"
 	"github.com/yuanhuaxi/weibo-spider/internal/model"
+	"github.com/yuanhuaxi/weibo-spider/pkg/logger"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -18,6 +19,23 @@ type DBFactory struct {
 }
 
 var factory *DBFactory
+
+// InitDB 初始化数据库（连接 + 迁移）
+func InitDB(cfg *config.DatabaseConfig) (*DBFactory, error) {
+	factory = &DBFactory{cfg: cfg}
+
+	if err := factory.Init(); err != nil {
+		return nil, fmt.Errorf("数据库连接失败: %w", err)
+	}
+	logger.Info.Println("数据库连接成功")
+
+	if err := factory.AutoMigrate(); err != nil {
+		return nil, fmt.Errorf("数据库迁移失败: %w", err)
+	}
+	logger.Info.Println("数据库表结构已同步")
+
+	return factory, nil
+}
 
 // NewFactory 创建工厂实例
 func NewFactory(cfg *config.DatabaseConfig) *DBFactory {

@@ -34,3 +34,15 @@ func (u *User) CSVRow() []string {
 		fmt.Sprintf("%d", u.Followers),
 	}
 }
+
+// SpecialFollowUser 特别关注用户（简化版）
+type SpecialFollowUser struct {
+	ID       string `json:"id"`
+	Nickname string `json:"nickname"`
+}
+
+// SpecialFollowList 特别关注列表响应
+type SpecialFollowList struct {
+	Users []SpecialFollowUser `json:"users"`
+	Total int                 `json:"total"`
+}

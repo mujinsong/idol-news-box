@@ -156,10 +156,23 @@ func (p *PageParser) parseMedia(s *goquery.Selection, weibo *dto.Weibo) {
 
 // convertToOriginalPic 将缩略图URL转换为原图URL
 func (p *PageParser) convertToOriginalPic(thumbURL string) string {
-	// wap180 是缩略图，large 是大图
-	// 例如: https://wx3.sinaimg.cn/wap180/xxx.jpg -> https://wx3.sinaimg.cn/large/xxx.jpg
-	if strings.Contains(thumbURL, "/wap180/") {
-		return strings.Replace(thumbURL, "/wap180/", "/large/", 1)
+	// 微博图片常见的缩略图格式
+	thumbFormats := []string{
+		"/thumb180/",
+		"/thumb300/",
+		"/wap180/",
+		"/wap360/",
+		"/orj360/",
+		"/mw690/",
+		"/mw1024/",
+		"/small/",
+		"/square/",
+		"/thumbnail/",
+	}
+	for _, format := range thumbFormats {
+		if strings.Contains(thumbURL, format) {
+			return strings.Replace(thumbURL, format, "/large/", 1)
+		}
 	}
 	return thumbURL
 }

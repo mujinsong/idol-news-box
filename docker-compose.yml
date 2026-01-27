@@ -13,5 +13,18 @@ services:
     volumes:
       - postgres_data:/bitnami/postgresql
 
+  rabbitmq:
+    image: rabbitmq:latest
+    container_name: weibo-spider-mq
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=admin123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
 volumes:
   postgres_data:
+  rabbitmq_data:

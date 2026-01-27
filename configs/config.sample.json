@@ -11,9 +11,18 @@
         "dbname": "weibo_spider",
         "sslmode": "disable"
     },
+    "rabbitmq": {
+        "url": "amqp://admin:admin123@localhost:5672/",
+        "task_queue": "weibo_spider_tasks",
+        "media_queue": "weibo_spider_media"
+    },
     "random_wait_pages": [1, 5],
     "random_wait_seconds": [6, 10],
     "write_mode": ["csv", "json"],
     "cookie": "your_cookie_here",
-    "output_dir": "./output"
+    "output_dir": "./output",
+    "proxies": [
+        "http://127.0.0.1:7890",
+        "socks5://127.0.0.1:1080"
+    ]
 }

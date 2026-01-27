@@ -13,18 +13,29 @@ import (
 	"github.com/yuanhuaxi/weibo-spider/pkg/logger"
 )
 
+const (
+	maxDownloadRetry = 3
+	baseRetryDelay   = 2 * time.Second
+	imageTimeout     = 60 * time.Second
+	videoTimeout     = 5 * time.Minute
+)
+
 // MediaDownloader 媒体下载器
 type MediaDownloader struct {
-	cfg    *config.Config
-	client *http.Client
+	cfg         *config.Config
+	imageClient *http.Client
+	videoClient *http.Client
 }
 
 // NewMediaDownloader 创建媒体下载器
 func NewMediaDownloader(cfg *config.Config) *MediaDownloader {
 	return &MediaDownloader{
 		cfg: cfg,
-		client: &http.Client{
-			Timeout: 60 * time.Second,
+		imageClient: &http.Client{
+			Timeout: imageTimeout,
+		},
+		videoClient: &http.Client{
+			Timeout: videoTimeout,
 		},
 	}
 }
@@ -52,7 +63,7 @@ func (d *MediaDownloader) DownloadImage(userID, weiboID, imageURL string) error 
 	}
 
 	// 下载图片
-	return d.download(imageURL, savePath, "https://weibo.cn/")
+	return d.download(imageURL, savePath, "https://weibo.cn/", false)
 }
 
 // DownloadVideo 下载视频
@@ -84,20 +95,26 @@ func (d *MediaDownloader) DownloadVideo(userID, weiboID, videoURL string) error 
 	}
 
 	// 下载视频
-	return d.download(videoURL, savePath, "https://m.weibo.cn/")
+	return d.download(videoURL, savePath, "https://m.weibo.cn/", true)
 }
 
 // parseVideoURL 解析视频页面获取真实视频URL
 func (d *MediaDownloader) parseVideoURL(pageURL string) (string, error) {
-	req, err := http.NewRequest("GET", pageURL, nil)
+	// 将 video/show 替换为 video/object 获取视频信息API
+	videoObjectURL := strings.Replace(pageURL, "m.weibo.cn/s/video/show", "m.weibo.cn/s/video/object", 1)
+
+	logger.Info.Printf("请求视频API: %s", videoObjectURL)
+
+	req, err := http.NewRequest("GET", videoObjectURL, nil)
 	if err != nil {
 		return "", err
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.111 Safari/537.36")
 	req.Header.Set("Referer", "https://m.weibo.cn/")
+	req.Header.Set("Cookie", d.cfg.Cookie)
 
-	resp, err := d.client.Do(req)
+	resp, err := d.imageClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -108,38 +125,57 @@ func (d *MediaDownloader) parseVideoURL(pageURL string) (string, error) {
 		return "", err
 	}
 
-	// 尝试从页面中提取视频URL
-	// 通常在 stream_url 或 video_src 字段中
 	content := string(body)
 
-	// 查找 stream_url
-	patterns := []string{
-		`"stream_url":"([^"]+)"`,
-		`"video_src":"([^"]+)"`,
-		`"url":"(https?://[^"]*\.mp4[^"]*)"`,
-	}
-
-	for _, pattern := range patterns {
-		if idx := strings.Index(content, "stream_url"); idx != -1 {
-			// 简单提取，实际可能需要更复杂的解析
+	// 尝试提取 hd_url 或 url
+	// 格式: {"data":{"object":{"stream":{"hd_url":"...","url":"..."}}}}
+	for _, key := range []string{"hd_url", "url"} {
+		pattern := `"` + key + `":"([^"]+)"`
+		if idx := strings.Index(content, `"`+key+`"`); idx != -1 {
 			start := strings.Index(content[idx:], "http")
 			if start != -1 {
 				end := strings.Index(content[idx+start:], `"`)
 				if end != -1 {
 					url := content[idx+start : idx+start+end]
 					url = strings.ReplaceAll(url, `\/`, `/`)
+					logger.Info.Printf("找到视频URL (%s): %s", key, url)
 					return url, nil
 				}
 			}
 		}
-		_ = pattern // 避免未使用警告
+		_ = pattern
 	}
 
-	return "", fmt.Errorf("无法从页面中提取视频URL")
+	// 调试日志
+	if len(content) > 500 {
+		logger.Info.Printf("视频API返回(前500字符): %s", content[:500])
+	} else {
+		logger.Info.Printf("视频API返回: %s", content)
+	}
+
+	return "", fmt.Errorf("无法从API响应中提取视频URL")
 }
 
-// download 通用下载方法
-func (d *MediaDownloader) download(url, savePath, referer string) error {
+// download 通用下载方法（带重试）
+func (d *MediaDownloader) download(url, savePath, referer string, isVideo bool) error {
+	var lastErr error
+	for i := 0; i < maxDownloadRetry; i++ {
+		if i > 0 {
+			logger.Info.Printf("重试下载 (%d/%d): %s", i+1, maxDownloadRetry, url)
+			time.Sleep(baseRetryDelay)
+		}
+
+		lastErr = d.doDownload(url, savePath, referer, isVideo)
+		if lastErr == nil {
+			return nil
+		}
+		logger.Warn.Printf("下载失败 (%d/%d): %v", i+1, maxDownloadRetry, lastErr)
+	}
+	return fmt.Errorf("下载失败，已重试%d次: %w", maxDownloadRetry, lastErr)
+}
+
+// doDownload 执行单次下载
+func (d *MediaDownloader) doDownload(url, savePath, referer string, isVideo bool) error {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("创建请求失败: %w", err)
@@ -148,7 +184,13 @@ func (d *MediaDownloader) download(url, savePath, referer string) error {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148")
 	req.Header.Set("Referer", referer)
 
-	resp, err := d.client.Do(req)
+	// 根据类型选择客户端
+	client := d.imageClient
+	if isVideo {
+		client = d.videoClient
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("请求失败: %w", err)
 	}

@@ -18,6 +18,7 @@ func AddSpiderRoute(r *gin.RouterGroup, spider *service.SpiderService) {
 
 	r.GET("/status", base.RecoverWrap(ctrl.status))
 	r.GET("/user/:user_id", base.RecoverWrap(ctrl.getUserInfo))
+	r.GET("/special-follows", base.RecoverWrap(ctrl.getSpecialFollows))
 	r.POST("/weibos", base.RecoverWrap(ctrl.getWeibos))
 	r.POST("/crawl", base.RecoverWrap(ctrl.crawl))
 }
@@ -87,6 +88,17 @@ func (ctrl *SpiderController) crawl(c *gin.Context) {
 	}
 
 	result, err := ctrl.spider.Run(task)
+	if err != nil {
+		base.BadResponse(c, err)
+		return
+	}
+
+	base.OkResponse(c, result)
+}
+
+// getSpecialFollows 获取特别关注列表
+func (ctrl *SpiderController) getSpecialFollows(c *gin.Context) {
+	result, err := ctrl.spider.GetSpecialFollows()
 	if err != nil {
 		base.BadResponse(c, err)
 		return

@@ -24,8 +24,9 @@ type DatabaseConfig struct {
 
 // RabbitMQConfig RabbitMQ配置
 type RabbitMQConfig struct {
-	URL       string `json:"url"`        // amqp://user:pass@host:port/vhost
-	TaskQueue string `json:"task_queue"` // 任务队列名称
+	URL        string `json:"url"`         // amqp://user:pass@host:port/vhost
+	TaskQueue  string `json:"task_queue"`  // 爬取任务队列名称
+	MediaQueue string `json:"media_queue"` // 媒体下载队列名称
 }
 
 // Config 爬虫配置
@@ -38,6 +39,7 @@ type Config struct {
 	WriteMode         []string       `json:"write_mode"`
 	Cookie            string         `json:"cookie"`
 	OutputDir         string         `json:"output_dir"`
+	Proxies           []string       `json:"proxies"` // 代理列表，格式: http://ip:port 或 socks5://ip:port
 }
 
 // Default 返回默认配置
@@ -55,8 +57,9 @@ func Default() *Config {
 			SSLMode: "disable",
 		},
 		RabbitMQ: RabbitMQConfig{
-			URL:       "amqp://guest:guest@localhost:5672/",
-			TaskQueue: "weibo_spider_tasks",
+			URL:        "amqp://guest:guest@localhost:5672/",
+			TaskQueue:  "weibo_spider_tasks",
+			MediaQueue: "weibo_spider_media",
 		},
 		RandomWaitPages:   [2]int{1, 5},
 		RandomWaitSeconds: [2]int{6, 10},

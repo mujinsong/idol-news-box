@@ -105,3 +105,21 @@ type TaskStatusResponse struct {
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
 }
+
+// MediaType 媒体类型
+type MediaType string
+
+const (
+	MediaTypeImage MediaType = "image"
+	MediaTypeVideo MediaType = "video"
+)
+
+// MediaDownloadTask 媒体下载任务
+type MediaDownloadTask struct {
+	TaskID    string    `json:"task_id"`    // 关联的爬取任务ID
+	UserID    string    `json:"user_id"`    // 用户ID
+	WeiboID   string    `json:"weibo_id"`   // 微博ID
+	MediaType MediaType `json:"media_type"` // 媒体类型
+	URL       string    `json:"url"`        // 下载URL
+	CreatedAt time.Time `json:"created_at"` // 创建时间
+}
