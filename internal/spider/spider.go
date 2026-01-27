@@ -282,35 +282,70 @@ func convertToLargeImage(src string) string {
 func (s *Spider) FetchSpecialFollows() (*dto.SpecialFollowList, error) {
 	logger.Info.Println("获取特别关注列表")
 
+	// 第一步：获取特别关注分组的 gid
+	gid, err := s.fetchSpecialFollowGid()
+	if err != nil {
+		return nil, err
+	}
+	if gid == "" {
+		return nil, fmt.Errorf("未找到特别关注分组")
+	}
+	logger.Info.Printf("特别关注分组 gid: %s", gid)
+
+	// 第二步：获取特别关注用户列表
+	return s.fetchFollowsByGid(gid)
+}
+
+// fetchSpecialFollowGid 获取特别关注分组的 gid
+func (s *Spider) fetchSpecialFollowGid() (string, error) {
+	var gid string
+	url := baseURL + "/attgroup"
+
+	c := s.newCollector()
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
+		href := e.Attr("href")
+		text := strings.TrimSpace(e.Text)
+		// 查找"特别关注"链接
+		if text == "特别关注" && strings.Contains(href, "gid=") {
+			// 提取 gid 参数
+			parts := strings.Split(href, "gid=")
+			if len(parts) > 1 {
+				gid = strings.Split(parts[1], "&")[0]
+			}
+		}
+	})
+
+	if err := c.Visit(url); err != nil {
+		return "", fmt.Errorf("获取关注分组失败: %w", err)
+	}
+	s.limiter.Wait()
+
+	return gid, nil
+}
+
+// fetchFollowsByGid 根据 gid 获取分组内的用户列表
+func (s *Spider) fetchFollowsByGid(gid string) (*dto.SpecialFollowList, error) {
 	result := &dto.SpecialFollowList{
 		Users: make([]dto.SpecialFollowUser, 0),
 	}
 
-	// 特别关注页面 URL
-	url := baseURL + "/attgroup/opening?gid=4286498122756239"
+	url := fmt.Sprintf("%s/attgroup/opening?gid=%s", baseURL, gid)
 
 	c := s.newCollector()
-	c.OnHTML("body", func(e *colly.HTMLElement) {
-		e.DOM.Find("table").Each(func(i int, table *goquery.Selection) {
-			// 查找用户链接
-			table.Find("a[href]").Each(func(j int, a *goquery.Selection) {
-				href, _ := a.Attr("href")
-				// 匹配用户主页链接格式: /u/1234567890 或 /1234567890
-				if strings.HasPrefix(href, "/u/") || (strings.HasPrefix(href, "/") && len(href) > 1) {
-					userID := strings.TrimPrefix(href, "/u/")
-					userID = strings.TrimPrefix(userID, "/")
-					// 过滤非数字ID
-					if isNumeric(userID) {
-						nickname := strings.TrimSpace(a.Text())
-						if nickname != "" && nickname != "关注" && nickname != "取消" {
-							result.Users = append(result.Users, dto.SpecialFollowUser{
-								ID:       userID,
-								Nickname: nickname,
-							})
-						}
-					}
+	c.OnHTML("table", func(e *colly.HTMLElement) {
+		e.DOM.Find("a[href]").Each(func(j int, a *goquery.Selection) {
+			href, _ := a.Attr("href")
+			// 匹配用户主页链接
+			if strings.HasPrefix(href, "/u/") {
+				userID := strings.TrimPrefix(href, "/u/")
+				nickname := strings.TrimSpace(a.Text())
+				if nickname != "" && isNumeric(userID) {
+					result.Users = append(result.Users, dto.SpecialFollowUser{
+						ID:       userID,
+						Nickname: nickname,
+					})
 				}
-			})
+			}
 		})
 	})
 

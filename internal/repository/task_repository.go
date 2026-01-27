@@ -2,7 +2,7 @@ package repository
 
 import (
 	"github.com/yuanhuaxi/weibo-spider/internal/model"
-	"github.com/yu
+	"github.com/yuanhuaxi/weibo-spider/internal/store"
 	"gorm.io/gorm"
 )
 
