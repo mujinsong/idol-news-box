@@ -11,6 +11,7 @@ import (
 	"github.com/yuanhuaxi/weibo-spider/pkg/logger"
 	"github.com/yuanhuaxi/weibo-spider/pkg/proxy"
 	"strings"
+	"time"
 )
 
 const baseURL = "https://weibo.cn"
@@ -50,6 +51,9 @@ func New(cfg *config.Config) *Spider {
 // newCollector 创建新的 Collector（每次请求都需要新建，避免回调累积）
 func (s *Spider) newCollector() *colly.Collector {
 	c := colly.NewCollector()
+
+	// 设置超时时间
+	c.SetRequestTimeout(30 * time.Second)
 
 	// 设置代理
 	if s.proxyPool != nil && !s.proxyPool.IsEmpty() {
@@ -302,11 +306,12 @@ func (s *Spider) fetchSpecialFollowGid() (string, error) {
 	url := baseURL + "/attgroup"
 
 	c := s.newCollector()
+
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		href := e.Attr("href")
 		text := strings.TrimSpace(e.Text)
 		// 查找"特别关注"链接
-		if text == "特别关注" && strings.Contains(href, "gid=") {
+		if strings.HasPrefix(text, "特别关注") && strings.Contains(href, "gid=") {
 			// 提取 gid 参数
 			parts := strings.Split(href, "gid=")
 			if len(parts) > 1 {
@@ -329,7 +334,7 @@ func (s *Spider) fetchFollowsByGid(gid string) (*dto.SpecialFollowList, error) {
 		Users: make([]dto.SpecialFollowUser, 0),
 	}
 
-	url := fmt.Sprintf("%s/attgroup/opening?gid=%s", baseURL, gid)
+	url := fmt.Sprintf("%s/attgroup/show?cat=user&gid=%s", baseURL, gid)
 
 	c := s.newCollector()
 	c.OnHTML("table", func(e *colly.HTMLElement) {
