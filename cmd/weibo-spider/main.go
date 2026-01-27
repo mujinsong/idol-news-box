@@ -34,7 +34,8 @@ func main() {
 	}
 
 	// 初始化数据库
-	if _, err := store.InitDB(&cfg.Database); err != nil {
+	dbFactory, err := store.InitDB(&cfg.Database)
+	if err != nil {
 		logger.Error.Printf("%v", err)
 		os.Exit(1)
 	}
@@ -45,6 +46,10 @@ func main() {
 
 	// 创建爬虫服务
 	spiderSvc := service.NewSpiderService(cfg)
+
+	// 设置特别关注存储
+	specialFollowStore := store.NewSpecialFollowStore(dbFactory.GetDB())
+	spiderSvc.SetSpecialFollowStore(specialFollowStore)
 
 	// 初始化RabbitMQ
 	var rabbitMQ *mq.RabbitMQ
@@ -85,6 +90,13 @@ func main() {
 	// 创建任务仓库
 	taskRepo := repository.NewTaskRepository()
 
+	// 创建用户服务
+	userStore := store.NewUserStore(dbFactory.GetDB())
+	userSvc := service.NewUserService(userStore)
+
+	// 创建认证服务
+	authSvc := service.NewAuthService(userStore)
+
 	// 启动定时任务调度器
 	sched := scheduler.New(spiderSvc, taskRepo)
 	if err := sched.LoadTasks(); err != nil {
@@ -93,7 +105,7 @@ func main() {
 	sched.Start()
 
 	// 启动HTTP服务
-	server := webserver.NewServer(spiderSvc, cfg.Server.Mode)
+	server := webserver.NewServer(spiderSvc, userSvc, authSvc, cfg.Server.Mode)
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info.Printf("服务启动在 %s", addr)
 

@@ -373,3 +373,35 @@ func isNumeric(s string) bool {
 	}
 	return len(s) > 0
 }
+
+// FetchCurrentUserID 获取当前登录用户的 ID（Cookie 所有者）
+func (s *Spider) FetchCurrentUserID() (string, error) {
+	logger.Info.Println("获取当前登录用户 ID")
+
+	var userID string
+	url := baseURL + "/my"
+
+	c := s.newCollector()
+	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
+		href := e.Attr("href")
+		// 查找 /u/数字ID 格式的链接
+		if strings.HasPrefix(href, "/u/") {
+			id := strings.TrimPrefix(href, "/u/")
+			if isNumeric(id) && userID == "" {
+				userID = id
+			}
+		}
+	})
+
+	if err := c.Visit(url); err != nil {
+		return "", fmt.Errorf("获取当前用户 ID 失败: %w", err)
+	}
+	s.limiter.Wait()
+
+	if userID == "" {
+		return "", fmt.Errorf("未能获取当前用户 ID，请检查 Cookie 是否有效")
+	}
+
+	logger.Info.Printf("当前登录用户 ID: %s", userID)
+	return userID, nil
+}

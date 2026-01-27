@@ -1,6 +1,9 @@
 package dto
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // User 用户信息
 type User struct {
@@ -45,4 +48,27 @@ type SpecialFollowUser struct {
 type SpecialFollowList struct {
 	Users []SpecialFollowUser `json:"users"`
 	Total int                 `json:"total"`
+}
+
+// SpecialFollowSyncResult 同步结果
+type SpecialFollowSyncResult struct {
+	OwnerID  string    `json:"owner_id"`
+	Total    int       `json:"total"`
+	SyncedAt time.Time `json:"synced_at"`
+}
+
+// SpecialFollowDBUser 数据库中的特别关注用户
+type SpecialFollowDBUser struct {
+	ID        uint      `json:"id"`
+	OwnerID   string    `json:"owner_id"`
+	UserID    string    `json:"user_id"`
+	Nickname  string    `json:"nickname"`
+	SyncedAt  time.Time `json:"synced_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SpecialFollowDBList 数据库特别关注列表响应
+type SpecialFollowDBList struct {
+	Users []SpecialFollowDBUser `json:"users"`
+	Total int                   `json:"total"`
 }

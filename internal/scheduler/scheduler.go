@@ -70,8 +70,33 @@ func (s *Scheduler) addTask(task *model.ScheduledTask) error {
 
 // Start 启动调度器
 func (s *Scheduler) Start() {
+	// 添加内置任务：每天凌晨2点同步特别关注
+	s.addSpecialFollowSyncTask()
+
 	s.cron.Start()
 	logger.Info.Println("定时任务调度器已启动")
+}
+
+// addSpecialFollowSyncTask 添加特别关注同步定时任务
+func (s *Scheduler) addSpecialFollowSyncTask() {
+	// 每天凌晨2点执行
+	_, err := s.cron.AddFunc("0 2 * * *", func() {
+		logger.Info.Println("执行定时任务: 同步特别关注")
+
+		result, err := s.spider.SyncSpecialFollows()
+		if err != nil {
+			logger.Error.Printf("同步特别关注失败: %v", err)
+			return
+		}
+
+		logger.Info.Printf("同步特别关注完成，共 %d 个用户", result.Total)
+	})
+
+	if err != nil {
+		logger.Error.Printf("添加特别关注同步任务失败: %v", err)
+	} else {
+		logger.Info.Println("已添加定时任务: 每天凌晨2点同步特别关注")
+	}
 }
 
 // Stop 停止调度器

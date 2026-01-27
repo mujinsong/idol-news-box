@@ -19,6 +19,9 @@ func AddSpiderRoute(r *gin.RouterGroup, spider *service.SpiderService) {
 	r.GET("/status", base.RecoverWrap(ctrl.status))
 	r.GET("/user/:user_id", base.RecoverWrap(ctrl.getUserInfo))
 	r.GET("/special-follows", base.RecoverWrap(ctrl.getSpecialFollows))
+	r.POST("/special-follows/sync", base.RecoverWrap(ctrl.syncSpecialFollows))
+	r.GET("/special-follows/db", base.RecoverWrap(ctrl.getSpecialFollowsFromDB))
+	r.DELETE("/special-follows/:user_id", base.RecoverWrap(ctrl.deleteSpecialFollow))
 	r.POST("/weibos", base.RecoverWrap(ctrl.getWeibos))
 	r.POST("/crawl", base.RecoverWrap(ctrl.crawl))
 }
@@ -105,4 +108,42 @@ func (ctrl *SpiderController) getSpecialFollows(c *gin.Context) {
 	}
 
 	base.OkResponse(c, result)
+}
+
+// syncSpecialFollows 同步特别关注到数据库
+func (ctrl *SpiderController) syncSpecialFollows(c *gin.Context) {
+	result, err := ctrl.spider.SyncSpecialFollows()
+	if err != nil {
+		base.BadResponse(c, err)
+		return
+	}
+
+	base.OkResponse(c, result)
+}
+
+// getSpecialFollowsFromDB 从数据库获取特别关注列表
+func (ctrl *SpiderController) getSpecialFollowsFromDB(c *gin.Context) {
+	result, err := ctrl.spider.GetSpecialFollowsFromDB()
+	if err != nil {
+		base.BadResponse(c, err)
+		return
+	}
+
+	base.OkResponse(c, result)
+}
+
+// deleteSpecialFollow 删除特别关注记录
+func (ctrl *SpiderController) deleteSpecialFollow(c *gin.Context) {
+	userID := c.Param("user_id")
+	if userID == "" {
+		base.ErrResponse(c, base.CodeBadRequest, "user_id 不能为空")
+		return
+	}
+
+	if err := ctrl.spider.DeleteSpecialFollow(userID); err != nil {
+		base.BadResponse(c, err)
+		return
+	}
+
+	base.OkResponse(c, gin.H{"message": "删除成功"})
 }

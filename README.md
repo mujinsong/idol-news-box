@@ -6,7 +6,10 @@
 
 - 爬取用户微博列表
 - 下载微博图片和视频
-- 支持异步任务队列
+- 获取特别关注用户列表
+- 支持 RabbitMQ 异步任务队列
+- 媒体下载独立队列（支持后续对象存储扩展）
+- 支持 IP 代理池
 - 多种输出格式（JSON、CSV、TXT）
 - RESTful API 接口
 - 定时任务调度
@@ -74,11 +77,20 @@ go build -o weibo-spider ./cmd/weibo-spider
         "dbname": "weibo_spider",   // 数据库名
         "sslmode": "disable"   // SSL 模式
     },
+    "rabbitmq": {
+        "url": "amqp://admin:admin123@localhost:5672/",  // RabbitMQ 连接地址
+        "task_queue": "weibo_spider_tasks",    // 爬虫任务队列
+        "media_queue": "weibo_spider_media"    // 媒体下载队列
+    },
     "random_wait_pages": [1, 5],    // 每爬取 1-5 页后随机等待
     "random_wait_seconds": [6, 10], // 随机等待 6-10 秒（防止被封）
     "write_mode": ["csv", "json"],  // 输出格式: csv/json/txt
     "cookie": "your_cookie_here",   // 微博 Cookie（必填）
-    "output_dir": "./output"        // 输出目录
+    "output_dir": "./output",       // 输出目录
+    "proxies": [                    // 代理池（可选）
+        "http://127.0.0.1:7890",
+        "socks5://127.0.0.1:1080"
+    ]
 }
 ```
 
@@ -89,6 +101,7 @@ go build -o weibo-spider ./cmd/weibo-spider
 | 服务 | 镜像 | 端口 | 说明 |
 |------|------|------|------|
 | postgresql | bitnami/postgresql:latest | 5432 | 数据库，存储定时任务 |
+| rabbitmq | rabbitmq:3-management | 5672/15672 | 消息队列，15672 为管理界面 |
 
 启动命令：
 
@@ -180,6 +193,163 @@ GET /api/v1/user/{user_id}
 
 ```bash
 GET /api/v1/health
+```
+
+### 获取特别关注列表
+
+获取当前登录用户的特别关注用户列表。
+
+```bash
+GET /api/v1/special-follows
+```
+
+**响应：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "users": [
+      {"id": "1234567890", "nickname": "用户昵称"},
+      {"id": "9876543210", "nickname": "另一个用户"}
+    ],
+    "total": 2
+  }
+}
+```
+
+### 同步特别关注到数据库
+
+从微博 API 获取特别关注列表并保存到数据库。
+
+```bash
+POST /api/v1/special-follows/sync
+```
+
+**响应：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "owner_id": "1234567890",
+    "total": 5,
+    "synced_at": "2026-01-27T10:30:00Z"
+  }
+}
+```
+
+### 从数据库获取特别关注列表
+
+获取已保存在数据库中的特别关注用户列表。
+
+```bash
+GET /api/v1/special-follows/db
+```
+
+**响应：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "users": [
+      {
+        "id": 1,
+        "owner_id": "1234567890",
+        "user_id": "9876543210",
+        "nickname": "用户昵称",
+        "synced_at": "2026-01-27T10:30:00Z",
+        "created_at": "2026-01-27T10:30:00Z"
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+### 删除特别关注记录
+
+从数据库中删除指定的特别关注用户记录。
+
+```bash
+DELETE /api/v1/special-follows/{user_id}
+```
+
+**响应：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "message": "删除成功"
+  }
+}
+```
+
+### 用户管理
+
+#### 创建用户
+
+```bash
+POST /api/v1/users
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123456",
+  "nickname": "管理员",
+  "weibo_cookie": "SUB=xxx; SUBP=xxx; ..."
+}
+```
+
+**响应：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "id": 1,
+    "username": "admin",
+    "nickname": "管理员",
+    "weibo_uid": "",
+    "status": 1,
+    "created_at": "2026-01-27T10:30:00Z",
+    "updated_at": "2026-01-27T10:30:00Z"
+  }
+}
+```
+
+#### 获取用户列表
+
+```bash
+GET /api/v1/users?page=1&size=10
+```
+
+#### 获取用户详情
+
+```bash
+GET /api/v1/users/{id}
+```
+
+#### 更新用户
+
+```bash
+PUT /api/v1/users/{id}
+Content-Type: application/json
+
+{
+  "nickname": "新昵称",
+  "password": "新密码",
+  "weibo_cookie": "新Cookie",
+  "status": 1
+}
+```
+
+#### 删除用户
+
+```bash
+DELETE /api/v1/users/{id}
 ```
 
 ## 输出目录结构

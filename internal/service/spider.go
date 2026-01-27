@@ -8,22 +8,25 @@ import (
 
 	"github.com/yuanhuaxi/weibo-spider/internal/config"
 	"github.com/yuanhuaxi/weibo-spider/internal/dto"
+	"github.com/yuanhuaxi/weibo-spider/internal/model"
 	"github.com/yuanhuaxi/weibo-spider/internal/mq"
 	"github.com/yuanhuaxi/weibo-spider/internal/spider"
+	"github.com/yuanhuaxi/weibo-spider/internal/store"
 	"github.com/yuanhuaxi/weibo-spider/pkg/logger"
 )
 
 // SpiderService 爬虫服务
 type SpiderService struct {
-	cfg           *config.Config
-	spider        *spider.Spider    // 复用的爬虫实例
-	downloader    *MediaDownloader  // 复用的下载器
-	producer      *mq.TaskProducer  // MQ生产者
-	mediaProducer *mq.MediaProducer // 媒体下载MQ生产者
-	running       bool
-	mu            sync.Mutex
-	tasks         map[string]*dto.CrawlTask // 任务存储
-	taskMu        sync.RWMutex              // 任务存储锁
+	cfg                *config.Config
+	spider             *spider.Spider            // 复用的爬虫实例
+	downloader         *MediaDownloader          // 复用的下载器
+	producer           *mq.TaskProducer          // MQ生产者
+	mediaProducer      *mq.MediaProducer         // 媒体下载MQ生产者
+	specialFollowStore *store.SpecialFollowStore // 特别关注存储
+	running            bool
+	mu                 sync.Mutex
+	tasks              map[string]*dto.CrawlTask // 任务存储
+	taskMu             sync.RWMutex              // 任务存储锁
 }
 
 // NewSpiderService 创建爬虫服务
@@ -34,6 +37,11 @@ func NewSpiderService(cfg *config.Config) *SpiderService {
 		downloader: NewMediaDownloader(cfg),
 		tasks:      make(map[string]*dto.CrawlTask),
 	}
+}
+
+// SetSpecialFollowStore 设置特别关注存储
+func (s *SpiderService) SetSpecialFollowStore(store *store.SpecialFollowStore) {
+	s.specialFollowStore = store
 }
 
 // SetProducer 设置MQ生产者
@@ -398,4 +406,89 @@ func (s *SpiderService) HandleMediaDownload(task *dto.MediaDownloadTask) error {
 // GetSpecialFollows 获取特别关注列表
 func (s *SpiderService) GetSpecialFollows() (*dto.SpecialFollowList, error) {
 	return s.spider.FetchSpecialFollows()
+}
+
+// SyncSpecialFollows 同步特别关注到数据库
+func (s *SpiderService) SyncSpecialFollows() (*dto.SpecialFollowSyncResult, error) {
+	if s.specialFollowStore == nil {
+		return nil, fmt.Errorf("特别关注存储未初始化")
+	}
+
+	// 获取当前登录用户ID（Cookie所有者）
+	ownerID, err := s.spider.FetchCurrentUserID()
+	if err != nil {
+		return nil, fmt.Errorf("获取当前用户ID失败: %w", err)
+	}
+
+	// 从API获取特别关注列表
+	list, err := s.spider.FetchSpecialFollows()
+	if err != nil {
+		return nil, fmt.Errorf("获取特别关注列表失败: %w", err)
+	}
+
+	// 转换为model并保存
+	now := time.Now()
+	follows := make([]*model.SpecialFollow, len(list.Users))
+	for i, u := range list.Users {
+		follows[i] = &model.SpecialFollow{
+			OwnerID:  ownerID,
+			UserID:   u.ID,
+			Nickname: u.Nickname,
+			SyncedAt: now,
+		}
+	}
+
+	if err := s.specialFollowStore.BatchUpsert(follows); err != nil {
+		return nil, fmt.Errorf("保存特别关注失败: %w", err)
+	}
+
+	return &dto.SpecialFollowSyncResult{
+		OwnerID:  ownerID,
+		Total:    len(follows),
+		SyncedAt: now,
+	}, nil
+}
+
+// GetSpecialFollowsFromDB 从数据库获取特别关注列表
+func (s *SpiderService) GetSpecialFollowsFromDB() (*dto.SpecialFollowDBList, error) {
+	if s.specialFollowStore == nil {
+		return nil, fmt.Errorf("特别关注存储未初始化")
+	}
+
+	follows, err := s.specialFollowStore.List()
+	if err != nil {
+		return nil, fmt.Errorf("查询特别关注失败: %w", err)
+	}
+
+	users := make([]dto.SpecialFollowDBUser, len(follows))
+	for i, f := range follows {
+		users[i] = dto.SpecialFollowDBUser{
+			ID:        f.ID,
+			OwnerID:   f.OwnerID,
+			UserID:    f.UserID,
+			Nickname:  f.Nickname,
+			SyncedAt:  f.SyncedAt,
+			CreatedAt: f.CreatedAt,
+		}
+	}
+
+	return &dto.SpecialFollowDBList{
+		Users: users,
+		Total: len(users),
+	}, nil
+}
+
+// DeleteSpecialFollow 删除特别关注记录
+func (s *SpiderService) DeleteSpecialFollow(userID string) error {
+	if s.specialFollowStore == nil {
+		return fmt.Errorf("特别关注存储未初始化")
+	}
+
+	// 获取当前登录用户ID
+	ownerID, err := s.spider.FetchCurrentUserID()
+	if err != nil {
+		return fmt.Errorf("获取当前用户ID失败: %w", err)
+	}
+
+	return s.specialFollowStore.Delete(ownerID, userID)
 }

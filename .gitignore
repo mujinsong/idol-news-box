@@ -21,6 +21,9 @@
 # Config with sensitive data
 config.json
 
+# Claude Code
+CLAUDE.md
+
 # Output directory
 output/
 

@@ -105,5 +105,9 @@ func (f *DBFactory) ensureDatabase() error {
 
 // AutoMigrate 自动迁移表结构
 func (f *DBFactory) AutoMigrate() error {
-	return f.db.AutoMigrate(&model.ScheduledTask{})
+	return f.db.AutoMigrate(
+		&model.ScheduledTask{},
+		&model.SpecialFollow{},
+		&model.User{},
+	)
 }
