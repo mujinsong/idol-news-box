@@ -23,6 +23,7 @@ type SpiderService struct {
 	producer           *mq.TaskProducer          // MQ生产者
 	mediaProducer      *mq.MediaProducer         // 媒体下载MQ生产者
 	specialFollowStore *store.SpecialFollowStore // 特别关注存储
+	userStore          *store.UserStore          // 用户存储
 	running            bool
 	mu                 sync.Mutex
 	tasks              map[string]*dto.CrawlTask // 任务存储
@@ -42,6 +43,11 @@ func NewSpiderService(cfg *config.Config) *SpiderService {
 // SetSpecialFollowStore 设置特别关注存储
 func (s *SpiderService) SetSpecialFollowStore(store *store.SpecialFollowStore) {
 	s.specialFollowStore = store
+}
+
+// SetUserStore 设置用户存储
+func (s *SpiderService) SetUserStore(store *store.UserStore) {
+	s.userStore = store
 }
 
 // SetProducer 设置MQ生产者
@@ -409,29 +415,39 @@ func (s *SpiderService) GetSpecialFollows() (*dto.SpecialFollowList, error) {
 }
 
 // SyncSpecialFollows 同步特别关注到数据库
-func (s *SpiderService) SyncSpecialFollows() (*dto.SpecialFollowSyncResult, error) {
+func (s *SpiderService) SyncSpecialFollows(userID uint) (*dto.SpecialFollowSyncResult, error) {
 	if s.specialFollowStore == nil {
 		return nil, fmt.Errorf("特别关注存储未初始化")
 	}
-
-	// 获取当前登录用户ID（Cookie所有者）
-	ownerID, err := s.spider.FetchCurrentUserID()
-	if err != nil {
-		return nil, fmt.Errorf("获取当前用户ID失败: %w", err)
+	if s.userStore == nil {
+		return nil, fmt.Errorf("用户存储未初始化")
 	}
 
-	// 从API获取特别关注列表
-	list, err := s.spider.FetchSpecialFollows()
+	// 从数据库获取用户信息
+	user, err := s.userStore.GetByID(userID)
+	if err != nil {
+		return nil, fmt.Errorf("获取用户信息失败: %w", err)
+	}
+
+	if user.WeiboCookie == "" {
+		return nil, fmt.Errorf("用户未配置微博Cookie")
+	}
+	if user.WeiboUID == "" {
+		return nil, fmt.Errorf("用户未配置微博UID")
+	}
+
+	// 使用用户的 Cookie 获取特别关注列表
+	list, err := s.spider.FetchSpecialFollowsWithCookie(user.WeiboCookie)
 	if err != nil {
 		return nil, fmt.Errorf("获取特别关注列表失败: %w", err)
 	}
 
-	// 转换为model并保存
+	// 转换为model并保存，使用数据库中的 WeiboUID 作为 OwnerID
 	now := time.Now()
 	follows := make([]*model.SpecialFollow, len(list.Users))
 	for i, u := range list.Users {
 		follows[i] = &model.SpecialFollow{
-			OwnerID:  ownerID,
+			OwnerID:  user.WeiboUID,
 			UserID:   u.ID,
 			Nickname: u.Nickname,
 			SyncedAt: now,
@@ -443,7 +459,7 @@ func (s *SpiderService) SyncSpecialFollows() (*dto.SpecialFollowSyncResult, erro
 	}
 
 	return &dto.SpecialFollowSyncResult{
-		OwnerID:  ownerID,
+		OwnerID:  user.WeiboUID,
 		Total:    len(follows),
 		SyncedAt: now,
 	}, nil

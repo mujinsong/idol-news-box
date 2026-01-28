@@ -220,10 +220,11 @@ GET /api/v1/special-follows
 
 ### 同步特别关注到数据库
 
-从微博 API 获取特别关注列表并保存到数据库。
+从微博 API 获取当前登录用户的特别关注列表并保存到数据库。**需要登录认证**，使用用户配置的微博 Cookie 进行同步。
 
 ```bash
 POST /api/v1/special-follows/sync
+Authorization: Bearer {token}
 ```
 
 **响应：**
@@ -238,6 +239,8 @@ POST /api/v1/special-follows/sync
   }
 }
 ```
+
+**注意：** 用户需要先在个人信息中配置 `weibo_cookie` 和 `weibo_uid` 才能使用此接口。
 
 ### 从数据库获取特别关注列表
 

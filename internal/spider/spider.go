@@ -50,6 +50,11 @@ func New(cfg *config.Config) *Spider {
 
 // newCollector 创建新的 Collector（每次请求都需要新建，避免回调累积）
 func (s *Spider) newCollector() *colly.Collector {
+	return s.newCollectorWithCookie(s.cfg.Cookie)
+}
+
+// newCollectorWithCookie 创建使用指定 Cookie 的 Collector
+func (s *Spider) newCollectorWithCookie(cookie string) *colly.Collector {
 	c := colly.NewCollector()
 
 	// 设置超时时间
@@ -66,7 +71,7 @@ func (s *Spider) newCollector() *colly.Collector {
 
 	c.OnRequest(func(r *colly.Request) {
 		logger.Info.Printf("请求URL: %s", r.URL.String())
-		r.Headers.Set("Cookie", s.cfg.Cookie)
+		r.Headers.Set("Cookie", cookie)
 		r.Headers.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 	})
 	return c
@@ -284,10 +289,15 @@ func convertToLargeImage(src string) string {
 
 // FetchSpecialFollows 获取当前登录用户的特别关注列表
 func (s *Spider) FetchSpecialFollows() (*dto.SpecialFollowList, error) {
+	return s.FetchSpecialFollowsWithCookie(s.cfg.Cookie)
+}
+
+// FetchSpecialFollowsWithCookie 使用指定 Cookie 获取特别关注列表
+func (s *Spider) FetchSpecialFollowsWithCookie(cookie string) (*dto.SpecialFollowList, error) {
 	logger.Info.Println("获取特别关注列表")
 
 	// 第一步：获取特别关注分组的 gid
-	gid, err := s.fetchSpecialFollowGid()
+	gid, err := s.fetchSpecialFollowGidWithCookie(cookie)
 	if err != nil {
 		return nil, err
 	}
@@ -297,15 +307,20 @@ func (s *Spider) FetchSpecialFollows() (*dto.SpecialFollowList, error) {
 	logger.Info.Printf("特别关注分组 gid: %s", gid)
 
 	// 第二步：获取特别关注用户列表
-	return s.fetchFollowsByGid(gid)
+	return s.fetchFollowsByGidWithCookie(gid, cookie)
 }
 
 // fetchSpecialFollowGid 获取特别关注分组的 gid
 func (s *Spider) fetchSpecialFollowGid() (string, error) {
+	return s.fetchSpecialFollowGidWithCookie(s.cfg.Cookie)
+}
+
+// fetchSpecialFollowGidWithCookie 使用指定 Cookie 获取特别关注分组的 gid
+func (s *Spider) fetchSpecialFollowGidWithCookie(cookie string) (string, error) {
 	var gid string
 	url := baseURL + "/attgroup"
 
-	c := s.newCollector()
+	c := s.newCollectorWithCookie(cookie)
 
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
 		href := e.Attr("href")
@@ -330,13 +345,18 @@ func (s *Spider) fetchSpecialFollowGid() (string, error) {
 
 // fetchFollowsByGid 根据 gid 获取分组内的用户列表
 func (s *Spider) fetchFollowsByGid(gid string) (*dto.SpecialFollowList, error) {
+	return s.fetchFollowsByGidWithCookie(gid, s.cfg.Cookie)
+}
+
+// fetchFollowsByGidWithCookie 使用指定 Cookie 根据 gid 获取分组内的用户列表
+func (s *Spider) fetchFollowsByGidWithCookie(gid, cookie string) (*dto.SpecialFollowList, error) {
 	result := &dto.SpecialFollowList{
 		Users: make([]dto.SpecialFollowUser, 0),
 	}
 
 	url := fmt.Sprintf("%s/attgroup/show?cat=user&gid=%s", baseURL, gid)
 
-	c := s.newCollector()
+	c := s.newCollectorWithCookie(cookie)
 	c.OnHTML("table", func(e *colly.HTMLElement) {
 		e.DOM.Find("a[href]").Each(func(j int, a *goquery.Selection) {
 			href, _ := a.Attr("href")

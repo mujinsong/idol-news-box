@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/yuanhuaxi/weibo-spider/internal/dto"
 	"github.com/yuanhuaxi/weibo-spider/internal/service"
@@ -112,7 +114,21 @@ func (ctrl *SpiderController) getSpecialFollows(c *gin.Context) {
 
 // syncSpecialFollows 同步特别关注到数据库
 func (ctrl *SpiderController) syncSpecialFollows(c *gin.Context) {
-	result, err := ctrl.spider.SyncSpecialFollows()
+	// 从 token 获取系统用户 ID
+	auth := c.GetHeader("Authorization")
+	if auth == "" {
+		base.ErrResponse(c, 401, "未登录")
+		return
+	}
+
+	token := strings.TrimPrefix(auth, "Bearer ")
+	userID, err := service.ParseToken(token)
+	if err != nil {
+		base.ErrResponse(c, 401, "登录已过期")
+		return
+	}
+
+	result, err := ctrl.spider.SyncSpecialFollows(userID)
 	if err != nil {
 		base.BadResponse(c, err)
 		return

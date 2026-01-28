@@ -94,11 +94,14 @@ func main() {
 	userStore := store.NewUserStore(dbFactory.GetDB())
 	userSvc := service.NewUserService(userStore)
 
+	// 设置用户存储到爬虫服务（用于同步特别关注时获取用户Cookie）
+	spiderSvc.SetUserStore(userStore)
+
 	// 创建认证服务
 	authSvc := service.NewAuthService(userStore)
 
 	// 启动定时任务调度器
-	sched := scheduler.New(spiderSvc, taskRepo)
+	sched := scheduler.New(spiderSvc, taskRepo, userStore)
 	if err := sched.LoadTasks(); err != nil {
 		logger.Error.Printf("加载定时任务失败: %v", err)
 	}

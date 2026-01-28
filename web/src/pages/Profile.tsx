@@ -25,9 +25,9 @@ const Profile = () => {
 
   const handleEdit = () => {
     form.setFieldsValue({
-      nickname: user?.nickname,
-      weibo_uid: user?.weibo_uid,
-      weibo_cookie: '',
+      nickname: user?.nickname || '',
+      weibo_uid: user?.weibo_uid || '',
+      weibo_cookie: user?.weibo_cookie || '',
     });
     setModalOpen(true);
   };

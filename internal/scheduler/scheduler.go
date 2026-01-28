@@ -8,22 +8,25 @@ import (
 	"github.com/yuanhuaxi/weibo-spider/internal/model"
 	"github.com/yuanhuaxi/weibo-spider/internal/repository"
 	"github.com/yuanhuaxi/weibo-spider/internal/service"
+	"github.com/yuanhuaxi/weibo-spider/internal/store"
 	"github.com/yuanhuaxi/weibo-spider/pkg/logger"
 )
 
 // Scheduler 定时任务调度器
 type Scheduler struct {
-	cron     *cron.Cron
-	spider   *service.SpiderService
-	taskRepo *repository.TaskRepository
+	cron      *cron.Cron
+	spider    *service.SpiderService
+	taskRepo  *repository.TaskRepository
+	userStore *store.UserStore
 }
 
 // New 创建调度器
-func New(spider *service.SpiderService, taskRepo *repository.TaskRepository) *Scheduler {
+func New(spider *service.SpiderService, taskRepo *repository.TaskRepository, userStore *store.UserStore) *Scheduler {
 	return &Scheduler{
-		cron:     cron.New(),
-		spider:   spider,
-		taskRepo: taskRepo,
+		cron:      cron.New(),
+		spider:    spider,
+		taskRepo:  taskRepo,
+		userStore: userStore,
 	}
 }
 
@@ -81,15 +84,26 @@ func (s *Scheduler) Start() {
 func (s *Scheduler) addSpecialFollowSyncTask() {
 	// 每天凌晨2点执行
 	_, err := s.cron.AddFunc("0 2 * * *", func() {
-		logger.Info.Println("执行定时任务: 同步特别关注")
+		logger.Info.Println("执行定时任务: 同步所有用户的特别关注")
 
-		result, err := s.spider.SyncSpecialFollows()
+		// 获取所有用户
+		users, _, err := s.userStore.List(1, 1000)
 		if err != nil {
-			logger.Error.Printf("同步特别关注失败: %v", err)
+			logger.Error.Printf("获取用户列表失败: %v", err)
 			return
 		}
 
-		logger.Info.Printf("同步特别关注完成，共 %d 个用户", result.Total)
+		for _, user := range users {
+			if user.WeiboCookie == "" {
+				continue
+			}
+			result, err := s.spider.SyncSpecialFollows(user.ID)
+			if err != nil {
+				logger.Error.Printf("同步用户 %d 的特别关注失败: %v", user.ID, err)
+				continue
+			}
+			logger.Info.Printf("用户 %d 同步特别关注完成，共 %d 个", user.ID, result.Total)
+		}
 	})
 
 	if err != nil {
